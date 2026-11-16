@@ -7,60 +7,63 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// Configuración de rutas para ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  
+  // Aumentamos límites para recibir audio o imágenes base64 sin error 413
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  // Initialize GoogleGenAI SDK server-side
+  // Inicializar SDK de Google GenAI con API Key del entorno
   const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
     httpOptions: {
       headers: {
-        'User-Agent': 'aistudio-build',
+        'User-Agent': 'dimelo-backend',
       },
     },
   });
 
-  // Voice & Text NLP Parser API endpoint using Gemini Structured Outputs
+  // Endpoint de NLP por texto/voz usando Gemini Structured Outputs
   app.post("/api/parse-voice", async (req, res) => {
     try {
       const { transcript, currentDate } = req.body;
       if (!transcript) {
-        return res.status(400).json({ error: "Transcript is required" });
+        return res.status(400).json({ error: "Falta el texto de la instrucción" });
       }
 
-      const prompt = `You are a productivity AI assistant for Dímelo.
-Analyze the user spoken request and extract task/calendar details.
-Current date/time context: ${currentDate || new Date().toISOString()}.
-Extract:
-- title: string (concise task title)
-- date: string (YYYY-MM-DD format for when the task is scheduled)
-- startTime: string (HH:MM in 24-hour format, e.g., "13:00". Default to "09:00" if unspecified)
-- durationMinutes: number (estimated duration in minutes, default 60)
-- reminderMinutes: number (minutes before start to remind, e.g. 15, default 15)
+      const prompt = `Eres el asistente de productividad de Dímelo.
+Analiza la solicitud y extrae los detalles de la tarea o evento.
+Contexto de fecha actual: ${currentDate || new Date().toISOString()}.
+Campos requeridos:
+- title: string (título conciso de la tarea)
+- date: string (YYYY-MM-DD)
+- startTime: string (HH:MM formato 24h, ej. "09:00")
+- durationMinutes: number (duración estimada, por defecto 60)
+- reminderMinutes: number (minutos antes para recordar, por defecto 30)
 - priority: string ("low" | "medium" | "high" | "urgent")
-- category: string ("Work" | "Personal" | "Study" | "Health" | "Finance")
+- category: string ("Trabajo" | "Personal" | "Estudio" | "Salud" | "Finanzas")
 `;
 
       const response = await ai.models.generateContent({
         model: "gemini-4-hydrogen",
-        contents: `${prompt}\nUser request: "${transcript}"`,
+        contents: `${prompt}\nSolicitud del usuario: "${transcript}"`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING, description: "Task title" },
-              date: { type: Type.STRING, description: "YYYY-MM-DD date" },
-              startTime: { type: Type.STRING, description: "HH:MM 24hr start time" },
-              durationMinutes: { type: Type.NUMBER, description: "Duration in minutes" },
-              reminderMinutes: { type: Type.NUMBER, description: "Minutes before start for reminder" },
-              priority: { type: Type.STRING, description: "low, medium, high, or urgent" },
-              category: { type: Type.STRING, description: "Work, Personal, Study, Health, or Finance" },
+              title: { type: Type.STRING },
+              date: { type: Type.STRING },
+              startTime: { type: Type.STRING },
+              durationMinutes: { type: Type.NUMBER },
+              reminderMinutes: { type: Type.NUMBER },
+              priority: { type: Type.STRING },
+              category: { type: Type.STRING },
             },
             required: ["title", "date", "startTime", "durationMinutes", "reminderMinutes", "priority", "category"],
           },
@@ -71,30 +74,22 @@ Extract:
       const parsedData = JSON.parse(jsonText);
       res.json(parsedData);
     } catch (error: any) {
-      console.error("Gemini parse-voice error:", error);
-      res.status(500).json({ error: error.message || "Failed to parse voice command with AI" });
+      console.error("Error procesando voz en backend:", error);
+      res.status(500).json({ error: error.message || "Error al procesar instrucción" });
     }
   });
 
-  // Audio Recording Parser API endpoint using Gemini Multimodal Audio
+  // Endpoint para procesar notas de audio con Gemini Multimodal
   app.post("/api/parse-audio", async (req, res) => {
     try {
       const { audioBase64, mimeType, currentDate } = req.body;
       if (!audioBase64) {
-        return res.status(400).json({ error: "Audio data is required" });
+        return res.status(400).json({ error: "Faltan datos de audio" });
       }
 
-      const prompt = `You are a productivity AI assistant for Dímelo.
-Listen to this audio recording in Spanish, transcribe the user request, and extract task/calendar details.
-Current date/time context: ${currentDate || new Date().toISOString()}.
-Extract:
-- title: string (concise task title in Spanish)
-- date: string (YYYY-MM-DD format for when the task is scheduled)
-- startTime: string (HH:MM in 24-hour format, e.g., "13:00". Default to "09:00" if unspecified)
-- durationMinutes: number (estimated duration in minutes, default 60)
-- reminderMinutes: number (minutes before start to remind, default 30)
-- priority: string ("low" | "medium" | "high" | "urgent")
-- category: string ("Trabajo" | "Personal" | "Estudio" | "Salud" | "Finanzas")
+      const prompt = `Escucha este audio en español, transcríbelo y extrae los datos de la tarea para Dímelo.
+Fecha actual: ${currentDate || new Date().toISOString()}.
+Extrae: title, date, startTime, durationMinutes, reminderMinutes, priority, category.
 `;
 
       const response = await ai.models.generateContent({
@@ -113,13 +108,13 @@ Extract:
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING, description: "Task title" },
-              date: { type: Type.STRING, description: "YYYY-MM-DD date" },
-              startTime: { type: Type.STRING, description: "HH:MM 24hr start time" },
-              durationMinutes: { type: Type.NUMBER, description: "Duration in minutes" },
-              reminderMinutes: { type: Type.NUMBER, description: "Minutes before start for reminder" },
-              priority: { type: Type.STRING, description: "low, medium, high, or urgent" },
-              category: { type: Type.STRING, description: "Trabajo, Personal, Estudio, Salud, or Finanzas" },
+              title: { type: Type.STRING },
+              date: { type: Type.STRING },
+              startTime: { type: Type.STRING },
+              durationMinutes: { type: Type.NUMBER },
+              reminderMinutes: { type: Type.NUMBER },
+              priority: { type: Type.STRING },
+              category: { type: Type.STRING },
             },
             required: ["title", "date", "startTime", "durationMinutes", "reminderMinutes", "priority", "category"],
           },
@@ -130,32 +125,22 @@ Extract:
       const parsedData = JSON.parse(jsonText);
       res.json(parsedData);
     } catch (error: any) {
-      console.error("Gemini parse-audio error:", error);
-      res.status(500).json({ error: error.message || "Failed to parse audio with AI" });
+      console.error("Error procesando audio con IA:", error);
+      res.status(500).json({ error: error.message || "Error al procesar audio" });
     }
   });
 
-  // Image Parser API endpoint using Gemini Multimodal Vision
+  // Endpoint para análisis visual de calendarios / imágenes (OCR inteligente)
   app.post("/api/parse-image", async (req, res) => {
     try {
       const { imageBase64, mimeType, currentDate } = req.body;
       if (!imageBase64) {
-        return res.status(400).json({ error: "Image data is required" });
+        return res.status(400).json({ error: "Faltan datos de imagen" });
       }
 
-      const prompt = `You are a productivity AI assistant for Dímelo.
-Analyze this image (which could be a calendar, schedule, assignment list, meeting notes, syllabus, etc.) in Spanish.
-Extract all tasks, assignments, events, or deadlines found in the image.
-Current date/time context: ${currentDate || new Date().toISOString()}.
-Return a JSON object with an array of tasks under property "tasks", where each task has:
-- title: string (concise task title in Spanish)
-- date: string (YYYY-MM-DD format)
-- startTime: string (HH:MM in 24hr format, default "09:00")
-- durationMinutes: number (default 60)
-- reminderMinutes: number (default 30)
-- priority: string ("low" | "medium" | "high" | "urgent")
-- category: string ("Trabajo" | "Personal" | "Estudio" | "Salud" | "Finanzas")
-- description: string (details or source context from image)
+      const prompt = `Analiza esta imagen (calendario, horario, asignaciones o apuntes) y extrae todas las tareas encontradas.
+Fecha actual: ${currentDate || new Date().toISOString()}.
+Devuelve un objeto JSON con un array 'tasks' donde cada tarea tenga: title, date, startTime, durationMinutes, priority, category, description.
 `;
 
       const response = await ai.models.generateContent({
@@ -201,29 +186,27 @@ Return a JSON object with an array of tasks under property "tasks", where each t
       const parsedData = JSON.parse(jsonText);
       res.json(parsedData);
     } catch (error: any) {
-      console.error("Gemini parse-image error:", error);
-      res.status(500).json({ error: error.message || "Failed to parse image with AI" });
+      console.error("Error analizando imagen:", error);
+      res.status(500).json({ error: error.message || "Error al analizar imagen" });
     }
   });
 
-  // Mock / Integration Sync endpoints
+  // Endpoints mock para sincronización con integraciones externas
   app.post("/api/sync/google", async (req, res) => {
     const { action, eventData } = req.body;
-    // Simulate bidirectional sync with Google Calendar API
     setTimeout(() => {
-      res.json({ success: true, message: `Synced with Google Calendar successfully (${action || 'upsert'})`, syncId: 'gcal_' + Date.now(), data: eventData });
-    }, 500);
+      res.json({ success: true, message: `Sincronizado con Google Calendar (${action || 'upsert'})`, syncId: 'gcal_' + Date.now(), data: eventData });
+    }, 300);
   });
 
   app.post("/api/sync/notion", async (req, res) => {
     const { action, taskData } = req.body;
-    // Simulate synchronization with Notion databases
     setTimeout(() => {
-      res.json({ success: true, message: `Synced with Notion database successfully (${action || 'update'})`, pageId: 'notion_' + Date.now(), data: taskData });
-    }, 500);
+      res.json({ success: true, message: `Sincronizado con Notion (${action || 'update'})`, pageId: 'notion_' + Date.now(), data: taskData });
+    }, 300);
   });
 
-  // Vite middleware for frontend development
+  // Integración de middlewares de Vite en entorno de desarrollo
   const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: 'spa',
@@ -233,10 +216,10 @@ Return a JSON object with an array of tasks under property "tasks", where each t
 
   const port = process.env.PORT || 3000;
   app.listen(port, () => {
-    console.log(`Dímelo server running on http://localhost:${port}`);
+    console.log(`[Dímelo] Servidor corriendo en http://localhost:${port}`);
   });
 }
 
 startServer().catch((err) => {
-  console.error("Failed to start server:", err);
+  console.error("Fallo al iniciar el servidor:", err);
 });

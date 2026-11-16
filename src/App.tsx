@@ -6,8 +6,10 @@ import {
 } from 'lucide-react';
 import { TaskItem, SyncSettings, Priority, Category } from './types';
 
+// Utilidad para formatear fechas en formato ISO estándar YYYY-MM-DD
 const getTodayString = () => new Date().toISOString().split('T')[0];
 
+// Tareas iniciales de ejemplo para la primera carga del usuario
 const INITIAL_TASKS: TaskItem[] = [
   {
     id: '1',
@@ -69,11 +71,13 @@ const INITIAL_TASKS: TaskItem[] = [
 ];
 
 export default function App() {
+  // Estado de tareas persistido en localStorage
   const [tasks, setTasks] = useState<TaskItem[]>(() => {
     const saved = localStorage.getItem('dimelo_tasks');
     return saved ? JSON.parse(saved) : INITIAL_TASKS;
   });
 
+  // Espacios del Notion Backlog persistidos
   const [notionSpaces, setNotionSpaces] = useState<string[]>(() => {
     const saved = localStorage.getItem('dimelo_notion_spaces');
     return saved ? JSON.parse(saved) : ['Ingeniería', 'Producto', 'Personal'];
@@ -83,7 +87,7 @@ export default function App() {
   const [newSpaceName, setNewSpaceName] = useState('');
   const [showNewSpaceModal, setShowNewSpaceModal] = useState(false);
 
-  // Notion item edit/read state
+  // Estados para edición y lectura de notas en Notion Backlog
   const [editingNotionItem, setEditingNotionItem] = useState<TaskItem | null>(null);
   const [notionViewMode, setNotionViewMode] = useState<'read' | 'edit'>('read');
 
@@ -99,23 +103,18 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState<string>(getTodayString());
   const [calendarViewMode, setCalendarViewMode] = useState<'week' | 'month'>('week');
   
-  // Notification Permission State
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-
-  // Mobile Hamburger Menu State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  // Day Inspection Modal for Month/Week View
   const [inspectDate, setInspectDate] = useState<string | null>(null);
 
-  // Voice Assistant Modal & State
+  // Estados del Asistente de Voz y Grabación de Audio
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [voiceInputText, setVoiceInputText] = useState('');
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [voiceErrorMsg, setVoiceErrorMsg] = useState<string | null>(null);
   const [voiceToast, setVoiceToast] = useState<{ message: string; undoTask?: TaskItem } | null>(null);
   
-  // Image Tasks Extraction State
+  // Estados para análisis de imágenes / calendarios con IA
   const [extractedImageTasks, setExtractedImageTasks] = useState<TaskItem[]>([]);
   const [showImageTasksModal, setShowImageTasksModal] = useState(false);
   const [analyzingImage, setAnalyzingImage] = useState(false);
@@ -123,18 +122,18 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  // Pomodoro state
+  // Estados del Temporizador Pomodoro
   const [activePomodoroTask, setActivePomodoroTask] = useState<TaskItem | null>(null);
   const [pomodoroSecondsLeft, setPomodoroSecondsLeft] = useState(25 * 60);
   const [isPomodoroRunning, setIsPomodoroRunning] = useState(false);
   const [pomodoroMode, setPomodoroMode] = useState<'work' | 'break'>('work');
 
-  // Manual Task Modal
+  // Modal de tareas manuales
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Partial<TaskItem> | null>(null);
   const [quickInputText, setQuickInputText] = useState('');
 
-  // Save tasks and spaces
+  // Efecto para sincronizar tareas con localStorage
   useEffect(() => {
     localStorage.setItem('dimelo_tasks', JSON.stringify(tasks));
   }, [tasks]);
@@ -143,7 +142,7 @@ export default function App() {
     localStorage.setItem('dimelo_notion_spaces', JSON.stringify(notionSpaces));
   }, [notionSpaces]);
 
-  // Request Notification permission on mount
+  // Solicitar permisos de notificación nativa del navegador al iniciar
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'granted') {
@@ -158,7 +157,7 @@ export default function App() {
     }
   }, []);
 
-  // Background Notification Scheduler
+  // Programador de notificaciones en segundo plano (aviso 30 min antes)
   useEffect(() => {
     const checkInterval = setInterval(() => {
       if (Notification.permission !== 'granted') return;
@@ -203,7 +202,7 @@ export default function App() {
     return () => clearInterval(checkInterval);
   }, [tasks]);
 
-  // Pomodoro timer effect
+  // Temporizador Pomodoro logic
   useEffect(() => {
     let interval: any = null;
     if (isPomodoroRunning && pomodoroSecondsLeft > 0) {
@@ -240,6 +239,7 @@ export default function App() {
     setIsRecordingAudio(false);
   };
 
+  // Grabación de audio real con MediaRecorder para Gemini Multimodal
   const startAudioRecording = async () => {
     try {
       audioChunksRef.current = [];
@@ -270,8 +270,8 @@ export default function App() {
       setIsRecordingAudio(true);
       setVoiceErrorMsg(null);
     } catch (e: any) {
-      console.error('Error de acceso al micrófono:', e);
-      setVoiceErrorMsg('Permiso de micrófono denegado o no disponible. Escribe tu instrucción abajo.');
+      console.error('Error al acceder al micrófono:', e);
+      setVoiceErrorMsg('No se pudo acceder al micrófono. Escribe tu instrucción abajo.');
       setIsRecordingAudio(false);
     }
   };
@@ -284,7 +284,7 @@ export default function App() {
   };
 
   const processAudioRecording = async (audioBase64: string, mimeType: string) => {
-    setVoiceToast({ message: 'Gemini escuchando y analizando tu voz...' });
+    setVoiceToast({ message: 'Procesando audio con IA...' });
     setShowVoiceModal(false);
 
     try {
@@ -321,7 +321,7 @@ export default function App() {
         throw new Error(data.error);
       }
     } catch (err: any) {
-      console.warn('Backend parse-audio failed, using fallback:', err);
+      console.warn('Usando respaldo local para audio:', err);
       const fallbackTask: TaskItem = {
         id: 'task_' + Date.now(),
         title: 'Nota de voz grabada',
@@ -341,12 +341,13 @@ export default function App() {
     }
   };
 
+  // Análisis inteligente de imágenes / calendarios con Gemini Vision
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setAnalyzingImage(true);
-    setVoiceToast({ message: 'Gemini analizando imagen (calendario/asignaciones)...' });
+    setVoiceToast({ message: 'Analizando imagen y extrayendo tareas...' });
 
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -386,7 +387,7 @@ export default function App() {
           throw new Error('No tasks found');
         }
       } catch (err) {
-        console.warn('Backend parse-image failed, using fallback:', err);
+        console.warn('Usando respaldo local para imagen:', err);
         const sampleTask: TaskItem = {
           id: 'img_task_' + Date.now(),
           title: file.name ? `Asignación de imagen: ${file.name}` : 'Asignación detectada en imagen',
@@ -423,7 +424,7 @@ export default function App() {
   };
 
   const processVoiceTranscript = async (transcript: string) => {
-    setVoiceToast({ message: 'Analizando instrucción con IA...' });
+    setVoiceToast({ message: 'Analizando instrucción...' });
 
     try {
       const res = await fetch('/api/parse-voice', {
@@ -570,10 +571,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#07080c] text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 overflow-x-hidden max-w-[100vw]">
       
-      {/* TOP BAR CONTRACT */}
+      {/* Barra de navegación principal */}
       <header className="flex items-center justify-between gap-2 px-3 sm:px-8 py-3.5 border-b border-white/[0.06] bg-[#07080c]/90 backdrop-blur-xl sticky top-0 z-40">
         
-        {/* Zone 1: Brand Wordmark & Mobile Hamburger */}
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -589,7 +589,6 @@ export default function App() {
           <span className="text-xs font-mono text-slate-500 hidden sm:inline">v2.5</span>
         </div>
 
-        {/* Zone 2: Navigation Links (Desktop) */}
         <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-400">
           <button 
             onClick={() => setActiveTab('today')}
@@ -611,7 +610,6 @@ export default function App() {
           </button>
         </nav>
 
-        {/* Zone 3: Primary Action */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleOpenVoiceAssistant}
@@ -634,7 +632,7 @@ export default function App() {
 
       </header>
 
-      {/* MOBILE HAMBURGER SLIDE-OVER DRAWER */}
+      {/* Menú deslizante móvil (Hamburguesa) */}
       {isMobileMenuOpen && (
         <div className="fixed inset-0 z-50 flex md:hidden bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-[#12141c] border-r border-white/10 w-4/5 max-w-xs h-full p-6 flex flex-col gap-6 shadow-2xl">
@@ -693,7 +691,7 @@ export default function App() {
         </div>
       )}
 
-      {/* VOICE TOAST */}
+      {/* Notificaciones flotantes (Toasts) */}
       {voiceToast && (
         <div className="fixed top-20 right-4 sm:right-8 z-50 flex items-center gap-3 bg-[#12141c] border border-white/10 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300 max-w-[90vw]">
           <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
@@ -709,14 +707,14 @@ export default function App() {
         </div>
       )}
 
-      {/* MAIN VIEWPORT */}
+      {/* Contenedor principal de vistas */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 grid grid-cols-1 lg:grid-cols-12 gap-8 pb-32 overflow-x-hidden">
 
-        {/* VIEW 1: TASKS FOR TODAY */}
+        {/* VISTA 1: Tareas para Hoy */}
         {activeTab === 'today' && (
           <div className="lg:col-span-12 flex flex-col gap-8 overflow-x-hidden">
             
-            {/* QUICK INPUT & IMAGE UPLOAD BAR */}
+            {/* Barra de entrada rápida y análisis de imágenes */}
             <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full">
               <form onSubmit={handleQuickSubmit} className="relative flex items-center flex-1 w-full">
                 <input
@@ -767,7 +765,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* TASKS GRID */}
+              {/* Listado de tareas */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {todaysTasks.length === 0 ? (
                   <div className="col-span-full text-center py-16 text-slate-600 text-xs">
@@ -836,7 +834,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* PRODUCTIVITY ANALYTICS */}
+            {/* Resumen de Productividad */}
             <div className="mt-4 pt-6 border-t border-white/[0.06] flex flex-col gap-5">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2">
@@ -870,7 +868,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: GOOGLE CALENDAR WEEK / MONTH VIEW */}
+        {/* VISTA 2: Google Calendar */}
         {activeTab === 'calendar' && (
           <div className="lg:col-span-12 flex flex-col gap-6 overflow-x-hidden">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.06]">
@@ -931,7 +929,7 @@ export default function App() {
                 })}
               </div>
             ) : (
-              /* MONTH VIEW WITH COLOR-CODED PRIORITY DOTS */
+              /* Vista de mes con puntos de prioridad de colores */
               <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
                 {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => (
                   <div key={d} className="text-center text-[11px] sm:text-xs font-mono text-slate-500 py-2">{d}</div>
@@ -955,7 +953,6 @@ export default function App() {
                         <span className="text-[9px] font-mono text-slate-600">{dayTasks.length ? `${dayTasks.length}` : ''}</span>
                       </div>
                       
-                      {/* Priority dots indicator */}
                       <div className="flex items-center gap-1 flex-wrap mt-1">
                         {dayTasks.map(t => (
                           <div 
@@ -973,7 +970,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 3: NOTION BACKLOG WITH INDEPENDENT SPACE BUTTONS */}
+        {/* VISTA 3: Notion Backlog */}
         {activeTab === 'backlog' && (
           <div className="lg:col-span-12 flex flex-col gap-6 overflow-x-hidden">
             <div className="flex flex-col gap-4 pb-4 border-b border-white/[0.06]">
@@ -999,7 +996,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* INDEPENDENT SPACE BUTTONS */}
+              {/* Botones independientes para cada espacio */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {notionSpaces.map(space => (
                   <button
@@ -1017,7 +1014,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Backlog Items Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {tasks.filter(t => t.status === 'backlog').length === 0 ? (
                 <div className="col-span-full text-center py-20 text-slate-600 text-xs">
@@ -1091,7 +1087,7 @@ export default function App() {
 
       </main>
 
-      {/* IMAGE TASKS REVIEW MODAL */}
+      {/* Modal de revisión de tareas detectadas en imagen */}
       {showImageTasksModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-[#12141c] border border-white/10 w-full max-w-lg rounded-2xl p-6 shadow-2xl flex flex-col gap-5 max-h-[85vh] overflow-hidden">
@@ -1167,7 +1163,7 @@ export default function App() {
         </div>
       )}
 
-      {/* NOTION ITEM READ / EDIT MODAL */}
+      {/* Modal de lectura / edición de notas en Notion */}
       {editingNotionItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-[#12141c] border border-white/10 w-full max-w-lg rounded-2xl p-6 shadow-2xl flex flex-col gap-5">
@@ -1260,7 +1256,7 @@ export default function App() {
         </div>
       )}
 
-      {/* NEW SPACE MODAL */}
+      {/* Modal para crear nuevo espacio en Notion */}
       {showNewSpaceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <form 
@@ -1307,7 +1303,7 @@ export default function App() {
         </div>
       )}
 
-      {/* VOICE ASSISTANT MODAL */}
+      {/* Modal del Asistente de Voz IA */}
       {showVoiceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-[#12141c] border border-white/10 w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col gap-5">
@@ -1385,7 +1381,7 @@ export default function App() {
         </div>
       )}
 
-      {/* DAY INSPECTION MODAL */}
+      {/* Modal de inspección de día */}
       {inspectDate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-[#12141c] border border-white/10 w-full max-w-lg rounded-2xl p-6 shadow-2xl flex flex-col gap-5 max-h-[85vh] overflow-hidden">
@@ -1474,7 +1470,7 @@ export default function App() {
         </div>
       )}
 
-      {/* POMODORO MODAL */}
+      {/* Modal Pomodoro Focus */}
       {activePomodoroTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
           <div className="bg-[#11131a] border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl flex flex-col items-center gap-6 text-center">
@@ -1505,7 +1501,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MANUAL TASK MODAL */}
+      {/* Modal de Tarea Manual */}
       {showTaskModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <form onSubmit={saveManualTask} className="bg-[#12141c] border border-white/10 w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
