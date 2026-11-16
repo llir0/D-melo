@@ -107,20 +107,18 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [inspectDate, setInspectDate] = useState<string | null>(null);
 
-  // Estados del Asistente de Voz y Grabación de Audio
+  // Estados del Asistente de Voz con Web Speech API (Transcripción en vivo a texto para NLP perfecto)
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [voiceInputText, setVoiceInputText] = useState('');
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [voiceErrorMsg, setVoiceErrorMsg] = useState<string | null>(null);
   const [voiceToast, setVoiceToast] = useState<{ message: string; undoTask?: TaskItem } | null>(null);
+  const recognitionRef = useRef<any>(null);
   
   // Estados para análisis de imágenes / calendarios con IA
   const [extractedImageTasks, setExtractedImageTasks] = useState<TaskItem[]>([]);
   const [showImageTasksModal, setShowImageTasksModal] = useState(false);
   const [analyzingImage, setAnalyzingImage] = useState(false);
-
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
 
   // Estados del Temporizador Pomodoro
   const [activePomodoroTask, setActivePomodoroTask] = useState<TaskItem | null>(null);
@@ -236,108 +234,67 @@ export default function App() {
     setShowVoiceModal(true);
     setVoiceInputText('');
     setVoiceErrorMsg(null);
-    setIsRecordingAudio(false);
+    setIsListening(false);
   };
 
-  // Grabación de audio real con MediaRecorder para Gemini Multimodal
-  const startAudioRecording = async () => {
-    try {
-      audioChunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+  // Web Speech API para transcripción de voz en tiempo real con alta precisión
+  const startVoiceRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceErrorMsg('Tu navegador no soporta reconocimiento de voz nativo. Escribe tu instrucción abajo.');
+      return;
+    }
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+    try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) {}
+        recognitionRef.current = null;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'es-ES';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setVoiceErrorMsg(null);
+      };
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          transcript += event.results[i][0].transcript;
+        }
+        if (transcript) {
+          setVoiceInputText(transcript);
         }
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64String = (reader.result as string).split(',')[1];
-          if (base64String) {
-            await processAudioRecording(base64String, 'audio/webm');
-          }
-        };
-        stream.getTracks().forEach(track => track.stop());
+      recognition.onerror = (event: any) => {
+        console.warn('Error en reconocimiento de voz:', event.error);
+        setIsListening(false);
       };
 
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
-      setIsRecordingAudio(true);
-      setVoiceErrorMsg(null);
-    } catch (e: any) {
-      console.error('Error al acceder al micrófono:', e);
-      setVoiceErrorMsg('No se pudo acceder al micrófono. Escribe tu instrucción abajo.');
-      setIsRecordingAudio(false);
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+    } catch (e) {
+      console.error(e);
+      setIsListening(false);
+      setVoiceErrorMsg('No se pudo iniciar el micrófono. Escribe tu tarea abajo.');
     }
   };
 
-  const stopAudioRecording = () => {
-    if (mediaRecorderRef.current && isRecordingAudio) {
-      mediaRecorderRef.current.stop();
-      setIsRecordingAudio(false);
-    }
-  };
-
-  const processAudioRecording = async (audioBase64: string, mimeType: string) => {
-    setVoiceToast({ message: 'Procesando audio con IA...' });
-    setShowVoiceModal(false);
-
-    try {
-      const res = await fetch('/api/parse-audio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audioBase64, mimeType, currentDate: new Date().toISOString() })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.title) {
-        const newTask: TaskItem = {
-          id: 'task_' + Date.now(),
-          title: data.title,
-          description: `Creado por Asistente de Voz IA`,
-          date: data.date || getTodayString(),
-          startTime: data.startTime || '10:00',
-          durationMinutes: data.durationMinutes || 60,
-          reminderMinutes: 30,
-          priority: (data.priority as Priority) || 'medium',
-          category: (data.category as Category) || 'Trabajo',
-          status: 'scheduled',
-          completed: false,
-          googleEventId: 'gcal_' + Date.now(),
-          notionPageId: 'notion_' + Date.now()
-        };
-
-        setTasks((prev) => [newTask, ...prev]);
-        setVoiceToast({ 
-          message: `Agendado por voz: "${newTask.title}" (${newTask.startTime})`,
-          undoTask: newTask 
-        });
-      } else {
-        throw new Error(data.error);
-      }
-    } catch (err: any) {
-      console.warn('Usando respaldo local para audio:', err);
-      const fallbackTask: TaskItem = {
-        id: 'task_' + Date.now(),
-        title: 'Nota de voz grabada',
-        description: 'Creado mediante grabación de audio',
-        date: getTodayString(),
-        startTime: '10:00',
-        durationMinutes: 60,
-        reminderMinutes: 30,
-        priority: 'medium',
-        category: 'Trabajo',
-        status: 'scheduled',
-        completed: false
-      };
-      setTasks((prev) => [fallbackTask, ...prev]);
-      setVoiceToast({ message: 'Tarea creada desde nota de voz.' });
-      setTimeout(() => setVoiceToast(null), 4000);
+  const stopVoiceRecognition = () => {
+    setIsListening(false);
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) {}
+      recognitionRef.current = null;
     }
   };
 
@@ -414,7 +371,7 @@ export default function App() {
 
   const submitVoiceAssistantTask = (e: React.FormEvent) => {
     e.preventDefault();
-    stopAudioRecording();
+    stopVoiceRecognition();
     if (!voiceInputText.trim()) return;
     const text = voiceInputText;
     setShowVoiceModal(false);
@@ -1309,36 +1266,36 @@ export default function App() {
           <div className="bg-[#12141c] border border-white/10 w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col gap-5">
             <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
               <div className="flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition ${isRecordingAudio ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition ${isListening ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-indigo-500/20 text-indigo-400'}`}>
                   <Mic className="w-4 h-4" />
                 </div>
-                <h3 className="text-sm font-bold text-white">Asistente de Voz IA (Gemini Audio)</h3>
+                <h3 className="text-sm font-bold text-white">Asistente de Voz IA</h3>
               </div>
-              <button onClick={() => { stopAudioRecording(); setShowVoiceModal(false); }} className="text-slate-400 hover:text-white p-1">
+              <button onClick={() => { stopVoiceRecognition(); setShowVoiceModal(false); }} className="text-slate-400 hover:text-white p-1">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="flex flex-col gap-3 bg-white/[0.03] p-4 rounded-xl border border-white/10 text-center">
               <span className="text-xs text-slate-300 font-medium">
-                {isRecordingAudio ? '🔴 Grabando tu voz... Habla claro' : '🎙️ Habla o dicta tu tarea por voz'}
+                {isListening ? '🎙️ Escuchando tu voz en tiempo real...' : '🎤 Habla o dicta tu tarea por voz'}
               </span>
               <div className="flex items-center justify-center gap-3">
-                {!isRecordingAudio ? (
+                {!isListening ? (
                   <button
                     type="button"
-                    onClick={startAudioRecording}
+                    onClick={startVoiceRecognition}
                     className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center gap-2"
                   >
-                    <Mic className="w-4 h-4" /> Empezar a Grabar Voz
+                    <Mic className="w-4 h-4" /> Hablar por Voz
                   </button>
                 ) : (
                   <button
                     type="button"
-                    onClick={stopAudioRecording}
+                    onClick={stopVoiceRecognition}
                     className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl shadow-lg shadow-rose-600/30 transition flex items-center gap-2 animate-pulse"
                   >
-                    <MicOff className="w-4 h-4" /> Detener y Procesar con IA
+                    <MicOff className="w-4 h-4" /> Detener Escucha
                   </button>
                 )}
               </div>
@@ -1356,7 +1313,7 @@ export default function App() {
                   rows={3}
                   value={voiceInputText}
                   onChange={(e) => setVoiceInputText(e.target.value)}
-                  placeholder="O escribe tu tarea aquí (ej. 'Reunión mañana a las 10am')..."
+                  placeholder="Lo que digas se transcribirá aquí automáticamente..."
                   className="w-full bg-[#181a24] border border-white/10 rounded-xl p-3.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 resize-none font-sans"
                 />
               </div>
@@ -1364,7 +1321,7 @@ export default function App() {
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => { stopAudioRecording(); setShowVoiceModal(false); }}
+                  onClick={() => { stopVoiceRecognition(); setShowVoiceModal(false); }}
                   className="px-4 py-2 text-xs text-slate-400 hover:text-white"
                 >
                   Cancelar
@@ -1373,7 +1330,7 @@ export default function App() {
                   type="submit"
                   className="px-5 py-2 bg-white text-slate-950 text-xs font-semibold rounded-xl shadow-lg transition"
                 >
-                  Procesar por Texto
+                  Procesar Tarea
                 </button>
               </div>
             </form>
