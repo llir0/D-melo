@@ -70,11 +70,56 @@ const INITIAL_TASKS: TaskItem[] = [
   }
 ];
 
+// Parser local robusto con extracción de hora (ej. "a las 5pm" -> 17:00), prioridad y categoría
+const parseTaskLocally = (text: string) => {
+  const lower = text.toLowerCase();
+  
+  let startTime = '10:00';
+  const timeRegex = /(?:a las|a la|las|a) (\d{1,2})(?::(\d{2}))?\s*(am|pm|hrs|h)?/i;
+  const match = text.match(timeRegex);
+  if (match) {
+    let hour = parseInt(match[1], 10);
+    const minute = match[2] ? match[2] : '00';
+    const ampm = match[3] ? match[3].toLowerCase() : '';
+    if ((ampm.includes('p') || lower.includes('tarde') || lower.includes('noche')) && hour < 12) {
+      if (hour < 12) hour += 12;
+    }
+    if (ampm.includes('a') && hour === 12) hour = 0;
+    startTime = `${hour.toString().padStart(2, '0')}:${minute}`;
+  }
+
+  let priority: Priority = 'medium';
+  if (lower.includes('urgente') || lower.includes('importante') || lower.includes('examen')) priority = 'urgent';
+  else if (lower.includes('alta') || lower.includes('proyecto')) priority = 'high';
+  else if (lower.includes('baja')) priority = 'low';
+
+  let category: Category = 'Trabajo';
+  if (lower.includes('personal') || lower.includes('casa') || lower.includes('comprar') || lower.includes('cafetería') || lower.includes('café')) category = 'Personal';
+  else if (lower.includes('estudio') || lower.includes('universidad') || lower.includes('curso') || lower.includes('leer')) category = 'Estudio';
+  else if (lower.includes('salud') || lower.includes('gimnasio') || lower.includes('doctor') || lower.includes('entrenar')) category = 'Salud';
+  else if (lower.includes('finanzas') || lower.includes('banco') || lower.includes('pago') || lower.includes('factura')) category = 'Finanzas';
+
+  return {
+    title: text.charAt(0).toUpperCase() + text.slice(1),
+    date: getTodayString(),
+    startTime,
+    durationMinutes: 60,
+    reminderMinutes: 30,
+    priority,
+    category
+  };
+};
+
 export default function App() {
-  // Estado de tareas persistido en localStorage
+  // Estado de tareas persistido en localStorage (limpiando registros antiguos de "Nota de voz grabada")
   const [tasks, setTasks] = useState<TaskItem[]>(() => {
     const saved = localStorage.getItem('dimelo_tasks');
-    return saved ? JSON.parse(saved) : INITIAL_TASKS;
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const cleaned = parsed.filter((t: TaskItem) => !t.title.includes('Nota de voz grabada'));
+      return cleaned.length > 0 ? cleaned : INITIAL_TASKS;
+    }
+    return INITIAL_TASKS;
   });
 
   // Espacios del Notion Backlog persistidos
@@ -107,7 +152,7 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [inspectDate, setInspectDate] = useState<string | null>(null);
 
-  // Estados del Asistente de Voz con Web Speech API (Transcripción en vivo a texto para NLP perfecto)
+  // Estados del Asistente de Voz con Web Speech API
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [voiceInputText, setVoiceInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -235,9 +280,12 @@ export default function App() {
     setVoiceInputText('');
     setVoiceErrorMsg(null);
     setIsListening(false);
+    setTimeout(() => {
+      startVoiceRecognition();
+    }, 250);
   };
 
-  // Web Speech API para transcripción de voz en tiempo real con alta precisión
+  // Web Speech API para transcripción de voz en tiempo real con manejo robusto de estados
   const startVoiceRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -267,7 +315,7 @@ export default function App() {
           transcript += event.results[i][0].transcript;
         }
         if (transcript) {
-          setVoiceInputText(transcript);
+          setVoiceInputText((prev) => prev ? prev + ' ' + transcript : transcript);
         }
       };
 
@@ -286,7 +334,7 @@ export default function App() {
     } catch (e) {
       console.error(e);
       setIsListening(false);
-      setVoiceErrorMsg('No se pudo iniciar el micrófono. Escribe tu tarea abajo.');
+      setVoiceErrorMsg('No se pudo iniciar el micrófono automáticamente. Haz clic en "Volver a escuchar".');
     }
   };
 
@@ -318,9 +366,13 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageBase64: base64String, mimeType, currentDate: new Date().toISOString() })
         });
+        const contentType = res.headers.get('content-type');
+        if (!res.ok || !contentType || !contentType.includes('application/json')) {
+          throw new Error('Static hosting fallback or non-json response');
+        }
         const data = await res.json();
 
-        if (res.ok && data.tasks && data.tasks.length > 0) {
+        if (data.tasks && data.tasks.length > 0) {
           const newItems: TaskItem[] = data.tasks.map((t: any, idx: number) => ({
             id: 'img_task_' + Date.now() + '_' + idx,
             title: t.title || 'Asignación detectada en imagen',
@@ -389,49 +441,80 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript, currentDate: new Date().toISOString() })
       });
+      const contentType = res.headers.get('content-type');
+      if (!res.ok || !contentType || !contentType.includes('application/json')) {
+        throw new Error('Static hosting fallback or non-json response');
+      }
       const data = await res.json();
 
-      if (res.ok && data.title) {
-        const newTask: TaskItem = {
-          id: 'task_' + Date.now(),
-          title: data.title,
+      if (data.tasks && Array.isArray(data.tasks) && data.tasks.length > 0) {
+        const newTasks: TaskItem[] = data.tasks.map((t: any, idx: number) => ({
+          id: 'task_' + Date.now() + '_' + idx,
+          title: t.title || transcript,
           description: `Creado por Asistente IA: "${transcript}"`,
-          date: data.date || getTodayString(),
-          startTime: data.startTime || '10:00',
-          durationMinutes: data.durationMinutes || 60,
-          reminderMinutes: 30,
-          priority: (data.priority as Priority) || 'medium',
-          category: (data.category as Category) || 'Trabajo',
+          date: t.date || getTodayString(),
+          startTime: t.startTime || '10:00',
+          durationMinutes: t.durationMinutes || 60,
+          reminderMinutes: t.reminderMinutes || 30,
+          priority: (t.priority as Priority) || 'medium',
+          category: (t.category as Category) || 'Trabajo',
           status: 'scheduled',
           completed: false,
-          googleEventId: 'gcal_' + Date.now(),
-          notionPageId: 'notion_' + Date.now()
-        };
+          googleEventId: 'gcal_' + Date.now() + '_' + idx,
+          notionPageId: 'notion_' + Date.now() + '_' + idx
+        }));
 
-        setTasks((prev) => [newTask, ...prev]);
+        setTasks((prev) => [...newTasks, ...prev]);
         setVoiceToast({ 
-          message: `Agendado con recordatorio a los 30 min: "${newTask.title}" (${newTask.startTime})`,
-          undoTask: newTask 
+          message: `¡Se agendaron ${newTasks.length} tareas correctamente con recordatorio de 30 min!`,
+          undoTask: newTasks[0] 
         });
-      } else {
-        throw new Error(data.error);
+        return;
       }
+      throw new Error('Invalid response format');
     } catch (err) {
-      const fallbackTask: TaskItem = {
-        id: 'task_' + Date.now(),
-        title: transcript,
-        description: 'Creado desde asistente',
-        date: getTodayString(),
-        startTime: '12:00',
-        durationMinutes: 60,
-        reminderMinutes: 30,
-        priority: 'medium',
-        category: 'Trabajo',
-        status: 'scheduled',
-        completed: false
-      };
-      setTasks((prev) => [fallbackTask, ...prev]);
-      setVoiceToast({ message: `Tarea creada: "${transcript}"` });
+      console.warn('Usando parser local multi-tarea inteligente:', err);
+      // Analizador local multi-tarea dividido por "y", "luego", "después", "también", punto y coma
+      const parts = transcript.split(/\s+y\s+|\s*,\s+|\s*;\s+|\s+luego\s+|\s+después\s+|\s+también\s+/i);
+      const newTasks: TaskItem[] = parts.map((part, idx) => {
+        const parsed = parseTaskLocally(part.trim());
+        return {
+          id: 'task_' + Date.now() + '_' + idx,
+          title: parsed.title,
+          description: `Creado desde instrucción: "${transcript}"`,
+          date: parsed.date,
+          startTime: parsed.startTime,
+          durationMinutes: parsed.durationMinutes,
+          reminderMinutes: 30,
+          priority: parsed.priority,
+          category: parsed.category,
+          status: 'scheduled' as const,
+          completed: false,
+          googleEventId: 'gcal_' + Date.now() + '_' + idx,
+          notionPageId: 'notion_' + Date.now() + '_' + idx
+        };
+      }).filter(t => t.title && t.title.length > 2);
+
+      if (newTasks.length > 0) {
+        setTasks((prev) => [...newTasks, ...prev]);
+        setVoiceToast({ message: `¡Se agendaron ${newTasks.length} tareas correctamente!` });
+      } else {
+        const fallbackTask: TaskItem = {
+          id: 'task_' + Date.now(),
+          title: transcript,
+          description: 'Creado desde asistente',
+          date: getTodayString(),
+          startTime: '12:00',
+          durationMinutes: 60,
+          reminderMinutes: 30,
+          priority: 'medium',
+          category: 'Trabajo',
+          status: 'scheduled',
+          completed: false
+        };
+        setTasks((prev) => [fallbackTask, ...prev]);
+        setVoiceToast({ message: `Tarea creada: "${transcript}"` });
+      }
     } finally {
       setTimeout(() => setVoiceToast(null), 4000);
     }
@@ -1328,7 +1411,7 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-white text-slate-950 text-xs font-semibold rounded-xl shadow-lg transition"
+                  className="px-5 py-2 bg-white text-slate-950 text-xs font-semibold rounded-lg shadow-lg transition"
                 >
                   Procesar Tarea
                 </button>

@@ -28,7 +28,7 @@ async function startServer() {
     },
   });
 
-  // Endpoint de NLP por texto/voz usando Gemini Structured Outputs
+  // Endpoint de NLP por texto/voz usando Gemini Structured Outputs para soportar múltiples tareas
   app.post("/api/parse-voice", async (req, res) => {
     try {
       const { transcript, currentDate } = req.body;
@@ -37,9 +37,9 @@ async function startServer() {
       }
 
       const prompt = `Eres el asistente de productividad de Dímelo.
-Analiza la solicitud y extrae los detalles de la tarea o evento.
-Contexto de fecha actual: ${currentDate || new Date().toISOString()}.
-Campos requeridos:
+Analiza la solicitud y extrae UNA o VARIAS tareas o eventos mencionados en el texto.
+Fecha actual: ${currentDate || new Date().toISOString()}.
+Devuelve un objeto JSON con un array 'tasks' donde cada elemento tenga:
 - title: string (título conciso de la tarea)
 - date: string (YYYY-MM-DD)
 - startTime: string (HH:MM formato 24h, ej. "09:00")
@@ -57,20 +57,29 @@ Campos requeridos:
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING },
-              date: { type: Type.STRING },
-              startTime: { type: Type.STRING },
-              durationMinutes: { type: Type.NUMBER },
-              reminderMinutes: { type: Type.NUMBER },
-              priority: { type: Type.STRING },
-              category: { type: Type.STRING },
+              tasks: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    date: { type: Type.STRING },
+                    startTime: { type: Type.STRING },
+                    durationMinutes: { type: Type.NUMBER },
+                    reminderMinutes: { type: Type.NUMBER },
+                    priority: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                  },
+                  required: ["title", "date", "startTime", "durationMinutes", "reminderMinutes", "priority", "category"],
+                }
+              }
             },
-            required: ["title", "date", "startTime", "durationMinutes", "reminderMinutes", "priority", "category"],
+            required: ["tasks"],
           },
         },
       });
 
-      const jsonText = response.text || "{}";
+      const jsonText = response.text || '{"tasks":[]}';
       const parsedData = JSON.parse(jsonText);
       res.json(parsedData);
     } catch (error: any) {
